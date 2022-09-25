@@ -1,0 +1,1690 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Jobs\CreateApplicationJob;
+use App\Jobs\InspectorAssignJob;
+use App\Jobs\UpdateApplicationJob;
+use App\Models\Application;
+use App\Models\Auditor;
+use App\Models\Deficiency;
+use App\Models\Document;
+use App\Models\FloorPlan;
+use App\Models\Photo;
+use App\Models\Role;
+use App\Models\Status100;
+use App\Models\Status50;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Redirect;
+use Illuminate\Support\Facades\Storage;
+use Yajra\DataTables\DataTables;
+
+class ApplicationController extends Controller
+{
+    function __construct() {
+        date_default_timezone_set('America/Chicago');
+    }
+
+    function index() {
+        return view('application');
+    }
+
+    function getApplications() {
+        if (Auth::user()->role_id == 2) {
+            $applications = Application::all();
+        } else if (Auth::user()->role_id == 3) {
+            $applications = Application::where('inspector_id', Auth::user()->id)->get();
+        } else {
+            $applications = Application::where('company_id', Auth::user()->company_id)->get();
+        }
+
+        $applicationArray = [];
+
+        foreach ($applications as $value) {
+            $applicationData = array(
+                'id' => $value->id,
+                'document_1' => $value->document_1,
+                'document_file_1' => $value->document_file_1,
+                'document_2' => $value->document_2,
+                'document_file_2' => $value->document_file_2,
+                'document_3' => $value->document_3,
+                'document_file_3' => $value->document_file_3,
+                'document_4' => $value->document_4,
+                'document_file_4' => $value->document_file_4,
+                'document_5' => $value->document_5,
+                'document_file_5' => $value->document_file_5,
+                'hriq_id' => $value->hriq_id,
+                'submitted_glo' => $value->submitted_glo,
+                'date_glo_submission' => $value->date_glo_submission,
+                'application_id' => $value->application_id,
+                'applicant_name' => $value->applicant_name,
+                'applicant_address' => $value->applicant_address,
+                'applicant_city' => $value->applicant_city,
+                'applicant_county' => $value->applicant_county,
+                'requester_id' => $value->requester_id,
+                'requester_name' => $value->requester_name,
+                'requester_email' => $value->requester_email,
+                'requester_phone' => $value->requester_phone,
+                'company' => $value->company,
+                'requested_date' => $value->requested_date,
+                'requested_time' => $value->requested_time,
+                'construction_type' => $value->construction_type,
+                'floor_plan' => FloorPlan::find($value->floor_plan) ? FloorPlan::find($value->floor_plan)->name : $value->floor_plan,
+                'inspection_type' => $value->inspection_type,
+                'region' => $value->region,
+                'supervisor_name' => $value->supervisor_name,
+                'supervisor_phone' => $value->supervisor_phone,
+            );
+
+            array_push($applicationArray, $applicationData);
+        }
+
+        return DataTables::of($applicationArray)
+            ->addColumn('action', function($applicationArray) {
+                $role = '';
+                if(Auth::user()->role_id == 1) {
+                    $role = 'contractor';
+                } else if(Auth::user()->role_id == 2) {
+                    $role = 'admin';
+                } else {
+                    $role = 'inspector';
+                }
+                return '<a class="btn btn-warning hd-table-btn editCompany mr-1" href="'.url($role.'/edit-application').'/'.$applicationArray['id'].'" data-id="'.$applicationArray['id'].'">Edit</a>
+                <a class="btn btn-primary hd-table-btn mr-1" href="'.url($role.'/view-application').'/'.$applicationArray['id'].'" data-id="'.$applicationArray['id'].'">View</a>';
+            })
+            ->rawColumns(['action'])
+            ->make(true);
+    }
+
+    function addApplicationView() {
+        $floorplans = FloorPlan::all();
+        $inspectors = User::where('role_id', 3)->get();
+        return view('addApplication', [
+            'floorplans' => $floorplans,
+            'inspectors' => $inspectors
+        ]);
+    }
+
+    function editApplicationView($id) {
+        $application = Application::find($id);
+        $floorplans = FloorPlan::all();
+        $inspectors = User::where('role_id', 3)->get();
+        $all_50 = "";
+        $all_100 = "";
+        $deficiency = "";
+        $photo = "";
+        if ($application->inspection_type == '50%') {
+            $all_50s = Status50::where('application_id', $application->id)->get();
+            if(count($all_50s) > 0) {
+                $all_50 = Status50::find($all_50s[0]->id);
+            }
+            $photo = Photo::where([
+                ['application_id', $application->id],
+                ['type', '50%']
+            ])->get();
+
+            if(count($photo) == 1) {
+                $photo = Photo::find($photo[0]->id);
+            } else {
+                $photo = "";
+            }
+
+            $deficiency = Deficiency::where([
+                ['application_id', $application->id],
+                ['type', '50%']
+            ])->get();
+
+            if(count($deficiency) == 1) {
+                $deficiency = Deficiency::find($deficiency[0]->id);
+            } else {
+                $deficiency = "";
+            }
+        } else {
+            $all_100s = Status100::where('application_id', $application->id)->get();
+            if(count($all_100s) > 0) {
+                $all_100 = Status100::find($all_100s[0]->id);
+            }
+
+            $photo = Photo::where([
+                ['application_id', $application->id],
+                ['type', '50%']
+            ])->get();
+
+            if(count($photo) == 1) {
+                $photo = Photo::find($photo[0]->id);
+            } else {
+                $photo = "";
+            }
+
+            $deficiency = Deficiency::where([
+                ['application_id', $application->id],
+                ['type', '50%']
+            ])->get();
+
+            if(count($deficiency) == 1) {
+                $deficiency = Deficiency::find($deficiency[0]->id);
+            } else {
+                $deficiency = "";
+            }
+        }
+        return view('editApplication', [
+            'application' => $application,
+            'floorplans' => $floorplans,
+            'inspectors' => $inspectors,
+            'all_50' => $all_50,
+            'all_100' => $all_100,
+            'photo' => $photo,
+            'deficiency' => $deficiency
+        ]);
+    }
+
+    function viewApplicationView($id) {
+        $application = Application::find($id);
+        $floorplans = FloorPlan::all();
+        $inspectors = User::where('role_id', 3)->get();
+        $all_50 = "";
+        $all_100 = "";
+        $deficiency = "";
+        $photo = "";
+        if ($application->inspection_type == '50%') {
+            $all_50s = Status50::where('application_id', $application->id)->get();
+            if(count($all_50s) > 0) {
+                $all_50 = Status50::find($all_50s[0]->id);
+            }
+            $photo = Photo::where([
+                ['application_id', $application->id],
+                ['type', '50%']
+            ])->get();
+
+            if(count($photo) == 1) {
+                $photo = Photo::find($photo[0]->id);
+            } else {
+                $photo = "";
+            }
+
+            $deficiency = Deficiency::where([
+                ['application_id', $application->id],
+                ['type', '50%']
+            ])->get();
+
+            if(count($deficiency) == 1) {
+                $deficiency = Deficiency::find($deficiency[0]->id);
+            } else {
+                $deficiency = "";
+            }
+        } else {
+            $all_100s = Status100::where('application_id', $application->id)->get();
+            if(count($all_100s) > 0) {
+                $all_100 = Status100::find($all_100s[0]->id);
+            }
+
+            $photo = Photo::where([
+                ['application_id', $application->id],
+                ['type', '50%']
+            ])->get();
+
+            if(count($photo) == 1) {
+                $photo = Photo::find($photo[0]->id);
+            } else {
+                $photo = "";
+            }
+
+            $deficiency = Deficiency::where([
+                ['application_id', $application->id],
+                ['type', '50%']
+            ])->get();
+
+            if(count($deficiency) == 1) {
+                $deficiency = Deficiency::find($deficiency[0]->id);
+            } else {
+                $deficiency = "";
+            }
+        }
+        return view('viewApplication', [
+            'application' => $application,
+            'floorplans' => $floorplans,
+            'inspectors' => $inspectors,
+            'all_50' => $all_50,
+            'all_100' => $all_100,
+            'photo' => $photo,
+            'deficiency' => $deficiency
+        ]);
+    }
+
+    function createApplication(Request $request) {
+        $document_1 = null;
+        $document_2 = null;
+        $document_3 = null;
+        $document_4 = null;
+        $document_5 = null;
+        $document_6 = null;
+        $document_file_1 = null;
+        $document_file_2 = null;
+        $document_file_3 = null;
+        $document_file_4 = null;
+        $document_file_5 = null;
+        $document_file_6 = null;
+
+        if ($request->hasFile('document_files1')) {
+            if($request->input('document_names1')) {
+                $document_1 = $request->input('document_names1');
+                $photoName = $request->document_files1->store('public/uploads');
+                $document_file_1 = str_replace('public/uploads/', '', $photoName);
+            }
+        }
+
+        if ($request->hasFile('document_files2')) {
+            if($request->input('document_names2')) {
+                $document_2 = $request->input('document_names2');
+                $photoName = $request->document_files2->store('public/uploads');
+                $document_file_2 = str_replace('public/uploads/', '', $photoName);
+            }
+        }
+
+        if ($request->hasFile('document_files3')) {
+            if($request->input('document_names3')) {
+                $document_3 = $request->input('document_names3');
+                $photoName = $request->document_files3->store('public/uploads');
+                $document_file_3 = str_replace('public/uploads/', '', $photoName);
+            }
+        }
+
+        if ($request->hasFile('document_files4')) {
+            if($request->input('document_names4')) {
+                $document_4 = $request->input('document_names4');
+                $photoName = $request->document_files4->store('public/uploads');
+                $document_file_4 = str_replace('public/uploads/', '', $photoName);
+            }
+        }
+
+        if ($request->hasFile('document_files5')) {
+            if($request->input('document_names5')) {
+                $document_5 = $request->input('document_names5');
+                $photoName = $request->document_files5->store('public/uploads');
+                $document_file_5 = str_replace('public/uploads/', '', $photoName);
+            }
+        }
+
+        if ($request->hasFile('document_files6')) {
+            if($request->input('document_names6')) {
+                $document_6 = $request->input('document_names6');
+                $photoName = $request->document_files6->store('public/uploads');
+                $document_file_6 = str_replace('public/uploads/', '', $photoName);
+            }
+        }
+
+        if(Auth::user()->role_id == 1) {
+            $company_id = Auth::user()->company_id;
+        } else {
+            $company = User::where('email', $request->input('requester_email_1'))->get();
+            if(count($company) > 1) {
+                $company_id = $company[0]->company_id;
+            } else {
+                $company_id = null;
+            }
+        }
+
+        $application = Application::create([
+            'company_id' => $company_id,
+            'document_1' => $document_1,
+            'document_file_1' => $document_file_1,
+            'document_2' => $document_2,
+            'document_file_2' => $document_file_2,
+            'document_3' => $document_3,
+            'document_file_3' => $document_file_3,
+            'document_4' => $document_4,
+            'document_file_4' => $document_file_4,
+            'document_5' => $document_5,
+            'document_file_5' => $document_file_5,
+            'document_6' => $document_6,
+            'document_file_6' => $document_file_6,
+            'hriq_id' => $request->input('hriq_id'),
+            'submitted_glo' => $request->input('submitted_to_glo'),
+            'date_glo_submission' => $request->input('date_glo_submission'),
+            'applicant_name' => $request->input('applicant_name'),
+            'applicant_address' => $request->input('applicant_street_address'),
+            'applicant_city' => $request->input('applicant_city'),
+            'applicant_county' => $request->input('applicant_county'),
+            'requester_name' => $request->input('requester_name'),
+            'requester_email' => $request->input('requester_email_1'),
+            'requester_phone' => $request->input('requester_phone'),
+            'company' => $request->input('company'),
+            'requested_date' => $request->input('requested_date'),
+            'requested_time' => $request->input('requested_time'),
+            'construction_type' => $request->input('construction_type'),
+            'floor_plan' => $request->input('floor_plan'),
+            'inspection_type' => $request->input('inspection_type'),
+            'region' => $request->input('region'),
+            'supervisor_name' => $request->input('onsite_supervisor_name'),
+            'supervisor_email' => $request->input('onsite_supervisor_email'),
+            'supervisor_phone' => $request->input('onsite_supervisor_phone'),
+        ]);
+
+        if(Auth::user()->role_id == 1 || Auth::user()->role_id == 2) {
+            Status50::create([
+                'application_id' => $application['id'],
+                'superintendent' => $request->input('onsite_supervisor_name'),
+                'superintendent_email' => $request->input('onsite_supervisor_email'),
+                'requester_email' => $request->input('requester_email_1'),
+                'superintendent_phone' => $request->input('onsite_supervisor_phone'),
+                'general_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+                'exterior_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+                'interior_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+                'window_door_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+                'roof_attic_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+
+            ]);
+
+            Status100::create([
+                'application_id' => $application['id'],
+                'superintendent' => $request->input('onsite_supervisor_name'),
+                'superintendent_email' => $request->input('onsite_supervisor_email'),
+                'requester_email' => $request->input('requester_email_1'),
+                'superintendent_phone' => $request->input('onsite_supervisor_phone'),
+                'general_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+                'exterior_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+                'interior_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+                'electrical_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+                'accessibility_inspection' => 'N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A_N/A',
+            ]);
+
+            Photo::create([
+                'application_id' => $application['id'],
+                'type' => '50%'
+            ]);
+
+            Photo::create([
+                'application_id' => $application['id'],
+                'type' => '100%'
+            ]);
+
+            Deficiency::create([
+                'application_id' => $application['id'],
+                'type' => '50%'
+            ]);
+
+            Deficiency::create([
+                'application_id' => $application['id'],
+                'type' => '100%'
+            ]);
+        }
+
+        Auditor::create([
+            'user_id' => Auth::user()->id,
+            'notification' => '<a href="'.url('admin/view-application/'.$application['id']).'">HRIQ ID '.$application['hriq_id'].'</a> New Application Created',
+            'date' => strtotime(date('Y-m-d H:i:s')),
+            'status' => 'unseen'
+        ]);
+
+//        $admins = User::where('role_id', 2)->get();
+//        foreach ($admins as $admin) {
+//            $this->dispatch(new CreateApplicationJob($admin->email, $application['id']));
+//        }
+
+        session()->flash('message', 'application_created');
+        if(Auth::user()->role_id == 1) {
+            return Redirect::to('contractor/application');
+        } else if(Auth::user()->role_id == 2) {
+            return Redirect::to('admin/application');
+        } else {
+            return Redirect::to('inspector/application');
+        }
+    }
+
+    function updateApplication(Request $request) {
+        $id = $request->input('id');
+        $old_data = Application::find($id);
+
+        Status50::where('application_id', $id)->update([
+            'superintendent' => $request->input('onsite_supervisor_name'),
+            'superintendent_email' => $request->input('onsite_supervisor_email'),
+            'requester_email' => $request->input('requester_email_1'),
+            'superintendent_phone' => $request->input('onsite_supervisor_phone')
+        ]);
+
+        Status100::where('application_id', $id)->update([
+            'superintendent' => $request->input('onsite_supervisor_name'),
+            'superintendent_email' => $request->input('onsite_supervisor_email'),
+            'requester_email' => $request->input('requester_email_1'),
+            'superintendent_phone' => $request->input('onsite_supervisor_phone')
+        ]);
+
+        if(Auth::user()->role_id == 1) {
+            $document_1 = $old_data->document_1;
+            $document_2 = $old_data->document_2;
+            $document_3 = $old_data->document_3;
+            $document_4 = $old_data->document_4;
+            $document_5 = $old_data->document_5;
+            $document_6 = $old_data->document_6;
+            $document_file_1 = $old_data->document_file_1;
+            $document_file_2 = $old_data->document_file_2;
+            $document_file_3 = $old_data->document_file_3;
+            $document_file_4 = $old_data->document_file_4;
+            $document_file_5 = $old_data->document_file_5;
+            $document_file_6 = $old_data->document_file_6;
+
+            if($old_data->document_file_1 != null) {
+                $document_1 = $request->input('document_names1');
+            }
+
+            if($old_data->document_file_2 != null) {
+                $document_2 = $request->input('document_names2');
+            }
+
+            if($old_data->document_file_3 != null) {
+                $document_3 = $request->input('document_names3');
+            }
+
+            if($old_data->document_file_4 != null) {
+                $document_4 = $request->input('document_names4');
+            }
+
+            if($old_data->document_file_5 != null) {
+                $document_5 = $request->input('document_names5');
+            }
+
+            if($old_data->document_file_6 != null) {
+                $document_6 = $request->input('document_names6');
+            }
+
+            if ($request->hasFile('document_files1')) {
+                if($request->input('document_names1')) {
+                    $document_1 = $request->input('document_names1');
+                    $photoName = $request->document_files1->store('public/uploads');
+                    $document_file_1 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files2')) {
+                if($request->input('document_names2')) {
+                    $document_2 = $request->input('document_names2');
+                    $photoName = $request->document_files2->store('public/uploads');
+                    $document_file_2 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files3')) {
+                if($request->input('document_names3')) {
+                    $document_3 = $request->input('document_names3');
+                    $photoName = $request->document_files3->store('public/uploads');
+                    $document_file_3 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files4')) {
+                if($request->input('document_names4')) {
+                    $document_4 = $request->input('document_names4');
+                    $photoName = $request->document_files4->store('public/uploads');
+                    $document_file_4 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files5')) {
+                if($request->input('document_names5')) {
+                    $document_5 = $request->input('document_names5');
+                    $photoName = $request->document_files5->store('public/uploads');
+                    $document_file_5 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files6')) {
+                if($request->input('document_names6')) {
+                    $document_6 = $request->input('document_names6');
+                    $photoName = $request->document_files6->store('public/uploads');
+                    $document_file_6 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            $application = Application::where('id', $id)->update([
+                'document_1' => $document_1,
+                'document_file_1' => $document_file_1,
+                'document_2' => $document_2,
+                'document_file_2' => $document_file_2,
+                'document_3' => $document_3,
+                'document_file_3' => $document_file_3,
+                'document_4' => $document_4,
+                'document_file_4' => $document_file_4,
+                'document_5' => $document_5,
+                'document_file_5' => $document_file_5,
+                'document_6' => $document_6,
+                'document_file_6' => $document_file_6,
+                'hriq_id' => $request->input('hriq_id'),
+                'submitted_glo' => $request->input('submitted_to_glo'),
+                'date_glo_submission' => $request->input('date_glo_submission'),
+                'applicant_name' => $request->input('applicant_name'),
+                'applicant_address' => $request->input('applicant_street_address'),
+                'applicant_city' => $request->input('applicant_city'),
+                'applicant_county' => $request->input('applicant_county'),
+                'requested_date' => $request->input('requested_date'),
+                'requested_time' => $request->input('requested_time'),
+                'construction_type' => $request->input('construction_type'),
+                'floor_plan' => $request->input('floor_plan'),
+                'inspection_type' => $request->input('inspection_type'),
+                'region' => $request->input('region'),
+                'requester_name' => $request->input('requester_name'),
+                'requester_email' => $request->input('requester_email_1'),
+                'requester_phone' => $request->input('requester_phone'),
+                'supervisor_name' => $request->input('onsite_supervisor_name'),
+                'supervisor_email' => $request->input('onsite_supervisor_email'),
+                'supervisor_phone' => $request->input('onsite_supervisor_phone'),
+            ]);
+        }
+        else if (Auth::user()->role_id == 2) {
+            $document_1 = $old_data->document_1;
+            $document_2 = $old_data->document_2;
+            $document_3 = $old_data->document_3;
+            $document_4 = $old_data->document_4;
+            $document_5 = $old_data->document_5;
+            $document_6 = $old_data->document_6;
+            $document_file_1 = $old_data->document_file_1;
+            $document_file_2 = $old_data->document_file_2;
+            $document_file_3 = $old_data->document_file_3;
+            $document_file_4 = $old_data->document_file_4;
+            $document_file_5 = $old_data->document_file_5;
+            $document_file_6 = $old_data->document_file_6;
+
+            if($old_data->document_file_1 != null) {
+                $document_1 = $request->input('document_names1');
+            }
+
+            if($old_data->document_file_2 != null) {
+                $document_2 = $request->input('document_names2');
+            }
+
+            if($old_data->document_file_3 != null) {
+                $document_3 = $request->input('document_names3');
+            }
+
+            if($old_data->document_file_4 != null) {
+                $document_4 = $request->input('document_names4');
+            }
+
+            if($old_data->document_file_5 != null) {
+                $document_5 = $request->input('document_names5');
+            }
+
+            if($old_data->document_file_6 != null) {
+                $document_6 = $request->input('document_names6');
+            }
+
+            if ($request->hasFile('document_files1')) {
+                if($request->input('document_names1')) {
+                    $document_1 = $request->input('document_names1');
+                    $photoName = $request->document_files1->store('public/uploads');
+                    $document_file_1 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files2')) {
+                if($request->input('document_names2')) {
+                    $document_2 = $request->input('document_names2');
+                    $photoName = $request->document_files2->store('public/uploads');
+                    $document_file_2 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files3')) {
+                if($request->input('document_names3')) {
+                    $document_3 = $request->input('document_names3');
+                    $photoName = $request->document_files3->store('public/uploads');
+                    $document_file_3 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files4')) {
+                if($request->input('document_names4')) {
+                    $document_4 = $request->input('document_names4');
+                    $photoName = $request->document_files4->store('public/uploads');
+                    $document_file_4 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files5')) {
+                if($request->input('document_names5')) {
+                    $document_5 = $request->input('document_names5');
+                    $photoName = $request->document_files5->store('public/uploads');
+                    $document_file_5 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            if ($request->hasFile('document_files6')) {
+                if($request->input('document_names6')) {
+                    $document_6 = $request->input('document_names6');
+                    $photoName = $request->document_files6->store('public/uploads');
+                    $document_file_6 = str_replace('public/uploads/', '', $photoName);
+                }
+            }
+
+            Application::where('id', $id)->update([
+                'document_1' => $document_1,
+                'document_file_1' => $document_file_1,
+                'document_2' => $document_2,
+                'document_file_2' => $document_file_2,
+                'document_3' => $document_3,
+                'document_file_3' => $document_file_3,
+                'document_4' => $document_4,
+                'document_file_4' => $document_file_4,
+                'document_5' => $document_5,
+                'document_file_5' => $document_file_5,
+                'document_6' => $document_6,
+                'document_file_6' => $document_file_6
+            ]);
+
+            if($request->input('inspector_assigned')) {
+                Application::where('id', $id)->update([
+                    'inspector_id' => $request->input('inspector_assigned')
+                ]);
+
+                Status50::where('application_id', $id)->update([
+                    'inspector_id' => $request->input('inspector_assigned'),
+                    'inspector' => User::find($request->input('inspector_assigned'))->name,
+                    'inspector_email' => User::find($request->input('inspector_assigned'))->email
+                ]);
+
+                Status100::where('application_id', $id)->update([
+                    'inspector_id' => $request->input('inspector_assigned'),
+                    'inspector' => User::find($request->input('inspector_assigned'))->name,
+                    'inspector_email' => User::find($request->input('inspector_assigned'))->email
+                ]);
+
+                if($old_data->inspector_id != $request->input('inspector_assigned')) {
+//                $admins = User::where('role_id', 2)->get();
+//                foreach ($admins as $admin) {
+//                    dispatch(new InspectorAssignJob(Auth::user()->id, $admin->email, $id));
+//                }
+//
+//                $inspector_email = User::find($request->input('inspector_assigned'))->email;
+//                dispatch(new InspectorAssignJob(Auth::user()->id, $inspector_email, $id));
+                }
+            }
+
+            $application = Application::where('id', $id)->update([
+                'hriq_id' => $request->input('hriq_id'),
+                'submitted_glo' => $request->input('submitted_to_glo'),
+                'date_glo_submission' => $request->input('date_glo_submission'),
+                'applicant_name' => $request->input('applicant_name'),
+                'applicant_address' => $request->input('applicant_street_address'),
+                'applicant_city' => $request->input('applicant_city'),
+                'applicant_county' => $request->input('applicant_county'),
+                'requested_date' => $request->input('requested_date'),
+                'requested_time' => $request->input('requested_time'),
+                'construction_type' => $request->input('construction_type'),
+                'floor_plan' => $request->input('floor_plan'),
+                'inspection_type' => $request->input('inspection_type'),
+                'region' => $request->input('region'),
+                'requester_name' => $request->input('requester_name'),
+                'requester_email' => $request->input('requester_email_1'),
+                'requester_phone' => $request->input('requester_phone'),
+                'supervisor_name' => $request->input('onsite_supervisor_name'),
+                'supervisor_email' => $request->input('onsite_supervisor_email'),
+                'supervisor_phone' => $request->input('onsite_supervisor_phone'),
+                //'inspector_id' => $request->input('inspector_id'),
+                'inspection_status' => $request->input('inspection_status'),
+                'scheduled_inspection_date' => $request->input('scheduled_inspection_date'),
+                'scheduled_inspection_time' => $request->input('scheduled_inspection_time'),
+                'comments' => $request->input('comments')
+            ]);
+        }
+        else if (Auth::user()->role_id == 3) {
+            $application = Application::where('id', $id)->update([
+                'hriq_id' => $request->input('hriq_id'),
+                'submitted_glo' => $request->input('submitted_to_glo'),
+                'date_glo_submission' => $request->input('date_glo_submission'),
+                'applicant_name' => $request->input('applicant_name'),
+                'applicant_address' => $request->input('applicant_street_address'),
+                'applicant_city' => $request->input('applicant_city'),
+                'applicant_county' => $request->input('applicant_county'),
+                'requested_date' => $request->input('requested_date'),
+                'requested_time' => $request->input('requested_time'),
+                'construction_type' => $request->input('construction_type'),
+                'floor_plan' => $request->input('floor_plan'),
+                'inspection_type' => $request->input('inspection_type'),
+                'region' => $request->input('region'),
+                'supervisor_name' => $request->input('onsite_supervisor_name'),
+                'supervisor_phone' => $request->input('onsite_supervisor_phone'),
+                'inspection_status' => $request->input('inspection_status'),
+                'scheduled_inspection_date' => $request->input('scheduled_inspection_date'),
+                'scheduled_inspection_time' => $request->input('scheduled_inspection_time'),
+                'comments' => $request->input('comments')
+            ]);
+        }
+
+        if(Auth::user()->role_id != 1) {
+            if($request->input('inspection_type') == '50%') {
+                $oldPhoto = Photo::where([
+                    ['application_id', $id],
+                    ['type', '50%']
+                ])->get();
+                $photos[0] = $oldPhoto[0]->photo_1;
+                $photos[1] = $oldPhoto[0]->photo_2;
+                $photos[2] = $oldPhoto[0]->photo_3;
+                $photos[3] = $oldPhoto[0]->photo_4;
+                $photos[4] = $oldPhoto[0]->photo_5;
+                $photos[5] = $oldPhoto[0]->photo_6;
+                $photos[6] = $oldPhoto[0]->photo_7;
+                $photos[7] = $oldPhoto[0]->photo_8;
+                $photos[8] = $oldPhoto[0]->photo_9;
+                $photos[9] = $oldPhoto[0]->photo_10;
+                $photos[10] = $oldPhoto[0]->photo_11;
+                $photos[11] = $oldPhoto[0]->photo_12;
+                $photos[12] = $oldPhoto[0]->photo_13;
+                $photos[13] = $oldPhoto[0]->photo_14;
+                $photos[14] = $oldPhoto[0]->photo_15;
+                $photos[15] = $oldPhoto[0]->photo_16;
+                $photos[16] = $oldPhoto[0]->photo_17;
+                $photos[17] = $oldPhoto[0]->photo_18;
+                $photos[18] = $oldPhoto[0]->photo_19;
+                $photos[19] = $oldPhoto[0]->photo_20;
+                $photos[20] = $oldPhoto[0]->photo_21;
+                $photos[21] = $oldPhoto[0]->photo_22;
+                $photos[22] = $oldPhoto[0]->photo_23;
+                $photos[23] = $oldPhoto[0]->photo_24;
+                $photos[24] = $oldPhoto[0]->photo_25;
+                $photos[25] = $oldPhoto[0]->photo_26;
+                $photos[26] = $oldPhoto[0]->photo_27;
+                $photos[27] = $oldPhoto[0]->photo_28;
+                $photos[28] = $oldPhoto[0]->photo_29;
+                $photos[29] = $oldPhoto[0]->photo_30;
+
+                if ($request->hasFile('photo_1_5')) {
+                    $photoName = $request->photo_1_5->store('public/uploads');
+                    $photos[0] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_2_5')) {
+                    $photoName = $request->photo_2_5->store('public/uploads');
+                    $photos[1] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_3_5')) {
+                    $photoName = $request->photo_3_5->store('public/uploads');
+                    $photos[2] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_4_5')) {
+                    $photoName = $request->photo_4_5->store('public/uploads');
+                    $photos[3] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_5_5')) {
+                    $photoName = $request->photo_5_5->store('public/uploads');
+                    $photos[4] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_6_5')) {
+                    $photoName = $request->photo_6_5->store('public/uploads');
+                    $photos[5] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_7_5')) {
+                    $photoName = $request->photo_7_5->store('public/uploads');
+                    $photos[6] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_8_5')) {
+                    $photoName = $request->photo_8_5->store('public/uploads');
+                    $photos[7] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_9_5')) {
+                    $photoName = $request->photo_9_5->store('public/uploads');
+                    $photos[8] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_10_5')) {
+                    $photoName = $request->photo_10_5->store('public/uploads');
+                    $photos[9] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_11_5')) {
+                    $photoName = $request->photo_11_5->store('public/uploads');
+                    $photos[10] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_12_5')) {
+                    $photoName = $request->photo_12_5->store('public/uploads');
+                    $photos[11] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_13_5')) {
+                    $photoName = $request->photo_13_5->store('public/uploads');
+                    $photos[12] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_14_5')) {
+                    $photoName = $request->photo_14_5->store('public/uploads');
+                    $photos[13] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_15_5')) {
+                    $photoName = $request->photo_15_5->store('public/uploads');
+                    $photos[14] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_16_5')) {
+                    $photoName = $request->photo_16_5->store('public/uploads');
+                    $photos[15] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_17_5')) {
+                    $photoName = $request->photo_17_5->store('public/uploads');
+                    $photos[16] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_18_5')) {
+                    $photoName = $request->photo_18_5->store('public/uploads');
+                    $photos[17] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_19_5')) {
+                    $photoName = $request->photo_19_5->store('public/uploads');
+                    $photos[18] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_20_5')) {
+                    $photoName = $request->photo_20_5->store('public/uploads');
+                    $photos[19] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_21_5')) {
+                    $photoName = $request->photo_21_5->store('public/uploads');
+                    $photos[20] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_22_5')) {
+                    $photoName = $request->photo_22_5->store('public/uploads');
+                    $photos[21] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_23_5')) {
+                    $photoName = $request->photo_23_5->store('public/uploads');
+                    $photos[22] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_24_5')) {
+                    $photoName = $request->photo_24_5->store('public/uploads');
+                    $photos[23] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_25_5')) {
+                    $photoName = $request->photo_25_5->store('public/uploads');
+                    $photos[24] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_26_5')) {
+                    $photoName = $request->photo_26_5->store('public/uploads');
+                    $photos[25] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_27_5')) {
+                    $photoName = $request->photo_27_5->store('public/uploads');
+                    $photos[26] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_28_5')) {
+                    $photoName = $request->photo_28_5->store('public/uploads');
+                    $photos[27] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_29_5')) {
+                    $photoName = $request->photo_29_5->store('public/uploads');
+                    $photos[28] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_30_5')) {
+                    $photoName = $request->photo_30_5->store('public/uploads');
+                    $photos[29] = str_replace('public/uploads/', '', $photoName);
+                }
+
+                $oldDeficiency = Deficiency::where([
+                    ['application_id', $id],
+                    ['type', '50%']
+                ])->get();
+                $deficiencies[0] = $oldDeficiency[0]->deficiency_1;
+                $deficiencies[1] = $oldDeficiency[0]->deficiency_2;
+                $deficiencies[2] = $oldDeficiency[0]->deficiency_3;
+                $deficiencies[3] = $oldDeficiency[0]->deficiency_4;
+                $deficiencies[4] = $oldDeficiency[0]->deficiency_5;
+                $deficiencies[5] = $oldDeficiency[0]->deficiency_6;
+                $deficiencies[6] = $oldDeficiency[0]->deficiency_7;
+                $deficiencies[7] = $oldDeficiency[0]->deficiency_8;
+                $deficiencies[8] = $oldDeficiency[0]->deficiency_9;
+                $deficiencies[9] = $oldDeficiency[0]->deficiency_10;
+                $deficiencies[10] = $oldDeficiency[0]->deficiency_11;
+                $deficiencies[11] = $oldDeficiency[0]->deficiency_12;
+                $deficiencies[12] = $oldDeficiency[0]->deficiency_13;
+
+                $deficiency_photos[0] = $oldDeficiency[0]->deficiency_photo_1;
+                $deficiency_photos[1] = $oldDeficiency[0]->deficiency_photo_2;
+                $deficiency_photos[2] = $oldDeficiency[0]->deficiency_photo_3;
+                $deficiency_photos[3] = $oldDeficiency[0]->deficiency_photo_4;
+                $deficiency_photos[4] = $oldDeficiency[0]->deficiency_photo_5;
+                $deficiency_photos[5] = $oldDeficiency[0]->deficiency_photo_6;
+                $deficiency_photos[6] = $oldDeficiency[0]->deficiency_photo_7;
+                $deficiency_photos[7] = $oldDeficiency[0]->deficiency_photo_8;
+                $deficiency_photos[8] = $oldDeficiency[0]->deficiency_photo_9;
+                $deficiency_photos[9] = $oldDeficiency[0]->deficiency_photo_10;
+                $deficiency_photos[10] = $oldDeficiency[0]->deficiency_photo_11;
+                $deficiency_photos[11] = $oldDeficiency[0]->deficiency_photo_12;
+                $deficiency_photos[12] = $oldDeficiency[0]->deficiency_photo_13;
+
+                if ($request->hasFile('deficiency_photo_1_5')) {
+                    if($request->input('deficiency_1_5')) {
+                        $deficiencies[0] = $request->input('deficiency_1_5');
+                        $photoName = $request->deficiency_photo_1_5->store('public/uploads');
+                        $deficiency_photos[0] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_2_5')) {
+                    if($request->input('deficiency_2_5')) {
+                        $deficiencies[1] = $request->input('deficiency_2_5');
+                        $photoName = $request->deficiency_photo_2_5->store('public/uploads');
+                        $deficiency_photos[1] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_3_5')) {
+                    if($request->input('deficiency_3_5')) {
+                        $deficiencies[2] = $request->input('deficiency_3_5');
+                        $photoName = $request->deficiency_photo_3_5->store('public/uploads');
+                        $deficiency_photos[2] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_4_5')) {
+                    if($request->input('deficiency_4_5')) {
+                        $deficiencies[3] = $request->input('deficiency_4_5');
+                        $photoName = $request->deficiency_photo_4_5->store('public/uploads');
+                        $deficiency_photos[3] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_5_5')) {
+                    if($request->input('deficiency_5_5')) {
+                        $deficiencies[4] = $request->input('deficiency_5_5');
+                        $photoName = $request->deficiency_photo_5_5->store('public/uploads');
+                        $deficiency_photos[4] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_6_5')) {
+                    if($request->input('deficiency_6_5')) {
+                        $deficiencies[5] = $request->input('deficiency_6_5');
+                        $photoName = $request->deficiency_photo_6_5->store('public/uploads');
+                        $deficiency_photos[5] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_7_5')) {
+                    if($request->input('deficiency_7_5')) {
+                        $deficiencies[6] = $request->input('deficiency_7_5');
+                        $photoName = $request->deficiency_photo_7_5->store('public/uploads');
+                        $deficiency_photos[6] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_8_5')) {
+                    if($request->input('deficiency_8_5')) {
+                        $deficiencies[7] = $request->input('deficiency_8_5');
+                        $photoName = $request->deficiency_photo_8_5->store('public/uploads');
+                        $deficiency_photos[7] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_9_5')) {
+                    if($request->input('deficiency_9_5')) {
+                        $deficiencies[8] = $request->input('deficiency_9_5');
+                        $photoName = $request->deficiency_photo_9_5->store('public/uploads');
+                        $deficiency_photos[8] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_10_5')) {
+                    if($request->input('deficiency_10_5')) {
+                        $deficiencies[9] = $request->input('deficiency_10_5');
+                        $photoName = $request->deficiency_photo_10_5->store('public/uploads');
+                        $deficiency_photos[9] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_11_5')) {
+                    if($request->input('deficiency_11_5')) {
+                        $deficiencies[10] = $request->input('deficiency_11_5');
+                        $photoName = $request->deficiency_photo_11_5->store('public/uploads');
+                        $deficiency_photos[10] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_12_5')) {
+                    if($request->input('deficiency_12_5')) {
+                        $deficiencies[11] = $request->input('deficiency_12_5');
+                        $photoName = $request->deficiency_photo_12_5->store('public/uploads');
+                        $deficiency_photos[11] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_13_5')) {
+                    if($request->input('deficiency_13_5')) {
+                        $deficiencies[12] = $request->input('deficiency_13_5');
+                        $photoName = $request->deficiency_photo_13_5->store('public/uploads');
+                        $deficiency_photos[12] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+
+                $oldData50 = Status50::where('application_id', $id)->get();
+                $oldData50 = Status50::find($oldData50[0]->id);
+                $attachment_1 = $oldData50->attachment_1;
+                $thumb_1 = $oldData50->thumb_1;
+                $document_spawn = $oldData50->document_spawn;
+                if ($request->hasFile('attachment_1_5')) {
+                    $photoName = $request->attachment_1_5->store('public/uploads');
+                    $attachment_1 = str_replace('public/uploads/', '', $photoName);
+                }
+
+                if ($request->hasFile('thumb_1_5')) {
+                    $photoName = $request->thumb_1_5->store('public/uploads');
+                    $thumb_1 = str_replace('public/uploads/', '', $photoName);
+                }
+
+                if ($request->hasFile('document_spawn_5')) {
+                    $photoName = $request->document_spawn_5->store('public/uploads');
+                    $document_spawn = str_replace('public/uploads/', '', $photoName);
+                }
+
+                Status50::where('application_id', $id)->update([
+                    'application_id' => $id,
+                    'cancellation_request' => $request->input('cancellation_request_5'),
+                    'date_inspected' => $request->input('date_inspected_5'),
+                    'inspector' => $request->input('inspector_5'),
+                    'inspector_email' => $request->input('inspector_email_5'),
+                    'superintendent' => $request->input('superintendent_5'),
+                    'superintendent_email' => $request->input('superintendent_email_5'),
+                    'requester_email' => $request->input('requester_email_5'),
+                    'superintendent_phone' => $request->input('superintendent_phone_5'),
+                    'document_spawn' => $document_spawn,
+                    'document_creation_date' => $request->input('document_creation_date_5'),
+                    'inspection_sign_off_date' => $request->input('inspection_sign_off_date_5'),
+                    'homeowner_sign_off_date' => $request->input('homeowner_sign_off_date_5'),
+                    'superintendent_sign_off_date' => $request->input('superintendent_sign_off_date_5'),
+                    'document_name' => $request->input('document_name_5'),
+                    'inspector_formula_sign' => $request->input('inspector_formula_sign_5'),
+                    'superintendent_formula_sign' => $request->input('superintendent_formula_sign_5'),
+                    'general_inspection' => $request->input('g5_i_1') ."_". $request->input('g5_i_2')."_".$request->input('g5_i_3')."_".$request->input('g5_i_4')."_".$request->input('g5_i_5')."_".$request->input('g5_i_6')."_".$request->input('g5_i_7')."_".$request->input('g5_i_8')."_".$request->input('g5_i_9')."_".$request->input('g5_i_10')."_".$request->input('g5_i_11')."_".$request->input('g5_i_12')."_".$request->input('g5_i_13')."_".$request->input('g5_i_14')."_".$request->input('g5_i_15')."_".$request->input('g5_i_16')."_".$request->input('g5_i_17')."_".$request->input('g5_i_18')."_".$request->input('g5_i_19')."_".$request->input('g5_i_20')."_".$request->input('g5_i_21'),
+                    'exterior_inspection' => $request->input('e5_i_1')."_".$request->input('e5_i_2')."_".$request->input('e5_i_3')."_".$request->input('e5_i_4')."_".$request->input('e5_i_5')."_".$request->input('e5_i_6')."_".$request->input('e5_i_7')."_".$request->input('e5_i_8')."_".$request->input('e5_i_9')."_".$request->input('e5_i_10')."_".$request->input('e5_i_11')."_".$request->input('e5_i_12'),
+                    'interior_inspection' => $request->input('i5_i_1')."_".$request->input('i5_i_2')."_".$request->input('i5_i_3')."_".$request->input('i5_i_4')."_".$request->input('i5_i_5')."_".$request->input('i5_i_6')."_".$request->input('i5_i_7')."_".$request->input('i5_i_8')."_".$request->input('i5_i_9')."_".$request->input('i5_i_10')."_".$request->input('i5_i_11')."_".$request->input('i5_i_12')."_".$request->input('i5_i_13')."_".$request->input('i5_i_14')."_".$request->input('i5_i_15'),
+                    'window_door_inspection' => $request->input('wd5_i_1')."_".$request->input('wd5_i_2')."_".$request->input('wd5_i_3')."_".$request->input('wd5_i_4'),
+                    'roof_attic_inspection' => $request->input('ra5_i_1')."_".$request->input('ra5_i_2')."_".$request->input('ra5_i_3')."_".$request->input('ra5_i_4')."_".$request->input('ra5_i_5')."_".$request->input('ra5_i_6')."_".$request->input('ra5_i_7')."_".$request->input('ra5_i_8')."_".$request->input('ra5_i_9')."_".$request->input('ra5_i_10'),
+                    'additional_information_1' => $request->input('additional_information_1_5'),
+                    'additional_information_2' => $request->input('additional_information_2_5'),
+                    'additional_information_3' => $request->input('additional_information_3_5'),
+                    'additional_information_4' => $request->input('additional_information_4_5'),
+                    'additional_notes' => $request->input('additional_notes_5'),
+                    'address_text' => $request->input('address_text_5'),
+                    'attachment_1' => $attachment_1,
+                    'ical_text' => $request->input('ical_text_5'),
+                    'contractor_builder_name' => $request->input('contractor_builder_name_5'),
+                    'thumb_1' => $thumb_1,
+                    'notify_glo' => $request->input('notify_glo_5'),
+                ]);
+
+                Photo::where([
+                    ['application_id', $id],
+                    ['type', '50%']
+                ])->update([
+                    'photo_1' => $photos[0],
+                    'photo_2' => $photos[1],
+                    'photo_3' => $photos[2],
+                    'photo_4' => $photos[3],
+                    'photo_5' => $photos[4],
+                    'photo_6' => $photos[5],
+                    'photo_7' => $photos[6],
+                    'photo_8' => $photos[7],
+                    'photo_9' => $photos[8],
+                    'photo_10' => $photos[9],
+                    'photo_11' => $photos[10],
+                    'photo_12' => $photos[11],
+                    'photo_13' => $photos[12],
+                    'photo_14' => $photos[13],
+                    'photo_15' => $photos[14],
+                    'photo_16' => $photos[15],
+                    'photo_17' => $photos[16],
+                    'photo_18' => $photos[17],
+                    'photo_19' => $photos[18],
+                    'photo_20' => $photos[19],
+                    'photo_21' => $photos[20],
+                    'photo_22' => $photos[21],
+                    'photo_23' => $photos[22],
+                    'photo_24' => $photos[23],
+                    'photo_25' => $photos[24],
+                    'photo_26' => $photos[25],
+                    'photo_27' => $photos[26],
+                    'photo_28' => $photos[27],
+                    'photo_29' => $photos[28],
+                    'photo_30' => $photos[29]
+                ]);
+
+                Deficiency::where([
+                    ['application_id', $id],
+                    ['type', '50%']
+                ])->update([
+                    'deficiency_1' => $deficiencies[0],
+                    'deficiency_photo_1' => $deficiency_photos[0],
+                    'deficiency_2' => $deficiencies[1],
+                    'deficiency_photo_2' => $deficiency_photos[1],
+                    'deficiency_3' => $deficiencies[2],
+                    'deficiency_photo_3' => $deficiency_photos[2],
+                    'deficiency_4' => $deficiencies[3],
+                    'deficiency_photo_4' => $deficiency_photos[3],
+                    'deficiency_5' => $deficiencies[4],
+                    'deficiency_photo_5' => $deficiency_photos[4],
+                    'deficiency_6' => $deficiencies[5],
+                    'deficiency_photo_6' => $deficiency_photos[5],
+                    'deficiency_7' => $deficiencies[6],
+                    'deficiency_photo_7' => $deficiency_photos[6],
+                    'deficiency_8' => $deficiencies[7],
+                    'deficiency_photo_8' => $deficiency_photos[7],
+                    'deficiency_9' => $deficiencies[8],
+                    'deficiency_photo_9' => $deficiency_photos[8],
+                    'deficiency_10' => $deficiencies[9],
+                    'deficiency_photo_10' => $deficiency_photos[9],
+                    'deficiency_11' => $deficiencies[10],
+                    'deficiency_photo_11' => $deficiency_photos[10],
+                    'deficiency_12' => $deficiencies[11],
+                    'deficiency_photo_12' => $deficiency_photos[11],
+                    'deficiency_13' => $deficiencies[12],
+                    'deficiency_photo_13' => $deficiency_photos[12],
+                ]);
+            }
+            else {
+                $oldPhoto = Photo::where([
+                    ['application_id', $id],
+                    ['type', '100%']
+                ])->get();
+                $photos[0] = $oldPhoto[0]->photo_1;
+                $photos[1] = $oldPhoto[0]->photo_2;
+                $photos[2] = $oldPhoto[0]->photo_3;
+                $photos[3] = $oldPhoto[0]->photo_4;
+                $photos[4] = $oldPhoto[0]->photo_5;
+                $photos[5] = $oldPhoto[0]->photo_6;
+                $photos[6] = $oldPhoto[0]->photo_7;
+                $photos[7] = $oldPhoto[0]->photo_8;
+                $photos[8] = $oldPhoto[0]->photo_9;
+                $photos[9] = $oldPhoto[0]->photo_10;
+                $photos[10] = $oldPhoto[0]->photo_11;
+                $photos[11] = $oldPhoto[0]->photo_12;
+                $photos[12] = $oldPhoto[0]->photo_13;
+                $photos[13] = $oldPhoto[0]->photo_14;
+                $photos[14] = $oldPhoto[0]->photo_15;
+                $photos[15] = $oldPhoto[0]->photo_16;
+                $photos[16] = $oldPhoto[0]->photo_17;
+                $photos[17] = $oldPhoto[0]->photo_18;
+                $photos[18] = $oldPhoto[0]->photo_19;
+                $photos[19] = $oldPhoto[0]->photo_20;
+                $photos[20] = $oldPhoto[0]->photo_21;
+                $photos[21] = $oldPhoto[0]->photo_22;
+                $photos[22] = $oldPhoto[0]->photo_23;
+                $photos[23] = $oldPhoto[0]->photo_24;
+                $photos[24] = $oldPhoto[0]->photo_25;
+                $photos[25] = $oldPhoto[0]->photo_26;
+                $photos[26] = $oldPhoto[0]->photo_27;
+                $photos[27] = $oldPhoto[0]->photo_28;
+                $photos[28] = $oldPhoto[0]->photo_29;
+                $photos[29] = $oldPhoto[0]->photo_30;
+
+                if ($request->hasFile('photo_1')) {
+                    $photoName = $request->photo_1->store('public/uploads');
+                    $photos[0] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_2')) {
+                    $photoName = $request->photo_2->store('public/uploads');
+                    $photos[1] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_3')) {
+                    $photoName = $request->photo_3->store('public/uploads');
+                    $photos[2] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_4')) {
+                    $photoName = $request->photo_4->store('public/uploads');
+                    $photos[3] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_5')) {
+                    $photoName = $request->photo_5->store('public/uploads');
+                    $photos[4] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_6')) {
+                    $photoName = $request->photo_6->store('public/uploads');
+                    $photos[5] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_7')) {
+                    $photoName = $request->photo_7->store('public/uploads');
+                    $photos[6] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_8')) {
+                    $photoName = $request->photo_8->store('public/uploads');
+                    $photos[7] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_9')) {
+                    $photoName = $request->photo_9->store('public/uploads');
+                    $photos[8] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_10')) {
+                    $photoName = $request->photo_10->store('public/uploads');
+                    $photos[9] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_11')) {
+                    $photoName = $request->photo_11->store('public/uploads');
+                    $photos[10] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_12')) {
+                    $photoName = $request->photo_12->store('public/uploads');
+                    $photos[11] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_13')) {
+                    $photoName = $request->photo_13->store('public/uploads');
+                    $photos[12] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_14')) {
+                    $photoName = $request->photo_14->store('public/uploads');
+                    $photos[13] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_15')) {
+                    $photoName = $request->photo_15->store('public/uploads');
+                    $photos[14] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_16')) {
+                    $photoName = $request->photo_16->store('public/uploads');
+                    $photos[15] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_17')) {
+                    $photoName = $request->photo_17->store('public/uploads');
+                    $photos[16] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_18')) {
+                    $photoName = $request->photo_18->store('public/uploads');
+                    $photos[17] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_19')) {
+                    $photoName = $request->photo_19->store('public/uploads');
+                    $photos[18] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_20')) {
+                    $photoName = $request->photo_20->store('public/uploads');
+                    $photos[19] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_21')) {
+                    $photoName = $request->photo_21->store('public/uploads');
+                    $photos[20] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_22')) {
+                    $photoName = $request->photo_22->store('public/uploads');
+                    $photos[21] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_23')) {
+                    $photoName = $request->photo_23->store('public/uploads');
+                    $photos[22] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_24')) {
+                    $photoName = $request->photo_24->store('public/uploads');
+                    $photos[23] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_25')) {
+                    $photoName = $request->photo_25->store('public/uploads');
+                    $photos[24] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_26')) {
+                    $photoName = $request->photo_26->store('public/uploads');
+                    $photos[25] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_27')) {
+                    $photoName = $request->photo_27->store('public/uploads');
+                    $photos[26] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_28')) {
+                    $photoName = $request->photo_28->store('public/uploads');
+                    $photos[27] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_29')) {
+                    $photoName = $request->photo_29->store('public/uploads');
+                    $photos[28] = str_replace('public/uploads/', '', $photoName);
+                }
+                if ($request->hasFile('photo_30')) {
+                    $photoName = $request->photo_30->store('public/uploads');
+                    $photos[29] = str_replace('public/uploads/', '', $photoName);
+                }
+
+                $oldDeficiency = Deficiency::where([
+                    ['application_id', $id],
+                    ['type', '100%']
+                ])->get();
+                $deficiencies[0] = $oldDeficiency[0]->deficiency_1;
+                $deficiencies[1] = $oldDeficiency[0]->deficiency_2;
+                $deficiencies[2] = $oldDeficiency[0]->deficiency_3;
+                $deficiencies[3] = $oldDeficiency[0]->deficiency_4;
+                $deficiencies[4] = $oldDeficiency[0]->deficiency_5;
+                $deficiencies[5] = $oldDeficiency[0]->deficiency_6;
+                $deficiencies[6] = $oldDeficiency[0]->deficiency_7;
+                $deficiencies[7] = $oldDeficiency[0]->deficiency_8;
+                $deficiencies[8] = $oldDeficiency[0]->deficiency_9;
+                $deficiencies[9] = $oldDeficiency[0]->deficiency_10;
+                $deficiencies[10] = $oldDeficiency[0]->deficiency_11;
+                $deficiencies[11] = $oldDeficiency[0]->deficiency_12;
+                $deficiencies[12] = $oldDeficiency[0]->deficiency_13;
+
+                $deficiency_photos[0] = $oldDeficiency[0]->deficiency_photo_1;
+                $deficiency_photos[1] = $oldDeficiency[0]->deficiency_photo_2;
+                $deficiency_photos[2] = $oldDeficiency[0]->deficiency_photo_3;
+                $deficiency_photos[3] = $oldDeficiency[0]->deficiency_photo_4;
+                $deficiency_photos[4] = $oldDeficiency[0]->deficiency_photo_5;
+                $deficiency_photos[5] = $oldDeficiency[0]->deficiency_photo_6;
+                $deficiency_photos[6] = $oldDeficiency[0]->deficiency_photo_7;
+                $deficiency_photos[7] = $oldDeficiency[0]->deficiency_photo_8;
+                $deficiency_photos[8] = $oldDeficiency[0]->deficiency_photo_9;
+                $deficiency_photos[9] = $oldDeficiency[0]->deficiency_photo_10;
+                $deficiency_photos[10] = $oldDeficiency[0]->deficiency_photo_11;
+                $deficiency_photos[11] = $oldDeficiency[0]->deficiency_photo_12;
+                $deficiency_photos[12] = $oldDeficiency[0]->deficiency_photo_13;
+
+                if ($request->hasFile('deficiency_photo_1')) {
+                    if($request->input('deficiency_1')) {
+                        $deficiencies[0] = $request->input('deficiency_1');
+                        $photoName = $request->deficiency_photo_1->store('public/uploads');
+                        $deficiency_photos[0] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_2')) {
+                    if($request->input('deficiency_2')) {
+                        $deficiencies[1] = $request->input('deficiency_2');
+                        $photoName = $request->deficiency_photo_2->store('public/uploads');
+                        $deficiency_photos[1] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_3')) {
+                    if($request->input('deficiency_3')) {
+                        $deficiencies[2] = $request->input('deficiency_3');
+                        $photoName = $request->deficiency_photo_3->store('public/uploads');
+                        $deficiency_photos[2] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_4')) {
+                    if($request->input('deficiency_4')) {
+                        $deficiencies[3] = $request->input('deficiency_4');
+                        $photoName = $request->deficiency_photo_4->store('public/uploads');
+                        $deficiency_photos[3] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_5')) {
+                    if($request->input('deficiency_5')) {
+                        $deficiencies[4] = $request->input('deficiency_5');
+                        $photoName = $request->deficiency_photo_5->store('public/uploads');
+                        $deficiency_photos[4] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_6')) {
+                    if($request->input('deficiency_6')) {
+                        $deficiencies[5] = $request->input('deficiency_6');
+                        $photoName = $request->deficiency_photo_6->store('public/uploads');
+                        $deficiency_photos[5] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_7')) {
+                    if($request->input('deficiency_7')) {
+                        $deficiencies[6] = $request->input('deficiency_7');
+                        $photoName = $request->deficiency_photo_7->store('public/uploads');
+                        $deficiency_photos[6] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_8')) {
+                    if($request->input('deficiency_8')) {
+                        $deficiencies[7] = $request->input('deficiency_8');
+                        $photoName = $request->deficiency_photo_8->store('public/uploads');
+                        $deficiency_photos[7] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_9')) {
+                    if($request->input('deficiency_9')) {
+                        $deficiencies[8] = $request->input('deficiency_9');
+                        $photoName = $request->deficiency_photo_9->store('public/uploads');
+                        $deficiency_photos[8] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_10')) {
+                    if($request->input('deficiency_10')) {
+                        $deficiencies[9] = $request->input('deficiency_10');
+                        $photoName = $request->deficiency_photo_10->store('public/uploads');
+                        $deficiency_photos[9] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_11')) {
+                    if($request->input('deficiency_11')) {
+                        $deficiencies[10] = $request->input('deficiency_11');
+                        $photoName = $request->deficiency_photo_11->store('public/uploads');
+                        $deficiency_photos[10] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_12')) {
+                    if($request->input('deficiency_12')) {
+                        $deficiencies[11] = $request->input('deficiency_12');
+                        $photoName = $request->deficiency_photo_12->store('public/uploads');
+                        $deficiency_photos[11] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+                if ($request->hasFile('deficiency_photo_13')) {
+                    if($request->input('deficiency_13')) {
+                        $deficiencies[12] = $request->input('deficiency_13');
+                        $photoName = $request->deficiency_photo_13->store('public/uploads');
+                        $deficiency_photos[12] = str_replace('public/uploads/', '', $photoName);
+                    }
+                }
+
+                $oldData100 = Status100::where('application_id', $id)->get();
+                $oldData100 = Status100::find($oldData100[0]->id);
+                $attachment_1 = $oldData100->attachment_1;
+                $thumb_1 = $oldData100->thumb_1;
+                $document_spawn = $oldData100->document_spawn;
+                if ($request->hasFile('attachment_1')) {
+                    $photoName = $request->attachment_1->store('public/uploads');
+                    $attachment_1 = str_replace('public/uploads/', '', $photoName);
+                }
+
+                if ($request->hasFile('thumb_1')) {
+                    $photoName = $request->thumb_1->store('public/uploads');
+                    $thumb_1 = str_replace('public/uploads/', '', $photoName);
+                }
+
+                if ($request->hasFile('document_spawn')) {
+                    $photoName = $request->document_spawn->store('public/uploads');
+                    $document_spawn = str_replace('public/uploads/', '', $photoName);
+                }
+                Status100::where('application_id', $id)->update([
+                    'application_id' => $id,
+                    'cancellation_request' => $request->input('cancellation_request'),
+                    'date_inspected' => $request->input('date_inspected'),
+                    'inspector' => $request->input('inspector'),
+                    'inspector_email' => $request->input('inspector_email'),
+                    'superintendent' => $request->input('superintendent'),
+                    'superintendent_email' => $request->input('superintendent_email'),
+                    'requester_email' => $request->input('requester_email'),
+                    'superintendent_phone' => $request->input('superintendent_phone'),
+                    'document_spawn' => $document_spawn,
+                    'document_creation_date' => $request->input('document_creation_date'),
+                    'inspection_sign_off_date' => $request->input('inspection_sign_off_date'),
+                    'homeowner_sign_off_date' => $request->input('homeowner_sign_off_date'),
+                    'superintendent_sign_off_date' => $request->input('superintendent_sign_off_date'),
+                    'document_name' => $request->input('document_name'),
+                    'inspector_formula_sign' => $request->input('inspector_formula_sign'),
+                    'superintendent_formula_sign' => $request->input('superintendent_formula_sign'),
+                    'general_inspection' => $request->input('g_i_1') ."_". $request->input('g_i_2')."_".$request->input('g_i_3')."_".$request->input('g_i_4')."_".$request->input('g_i_5')."_".$request->input('g_i_6')."_".$request->input('g_i_7')."_".$request->input('g_i_8')."_".$request->input('g_i_9')."_".$request->input('g_i_10')."_".$request->input('g_i_11')."_".$request->input('g_i_12')."_".$request->input('g_i_13')."_".$request->input('g_i_14')."_".$request->input('g_i_15')."_".$request->input('g_i_16')."_".$request->input('g_i_17')."_".$request->input('g_i_18')."_".$request->input('g_i_19')."_".$request->input('g_i_20')."_".$request->input('g_i_21')."_".$request->input('g_i_22')."_".$request->input('g_i_23')."_".$request->input('g_i_24'),
+                    'exterior_inspection' => $request->input('e_i_1')."_".$request->input('e_i_2')."_".$request->input('e_i_3')."_".$request->input('e_i_4')."_".$request->input('e_i_5')."_".$request->input('e_i_6')."_".$request->input('e_i_7')."_".$request->input('e_i_8')."_".$request->input('e_i_9')."_".$request->input('e_i_10')."_".$request->input('e_i_11')."_".$request->input('e_i_12')."_".$request->input('e_i_13')."_".$request->input('e_i_14')."_".$request->input('e_i_15')."_".$request->input('e_i_16')."_".$request->input('e_i_17'),
+                    'interior_inspection' => $request->input('i_i_1')."_".$request->input('i_i_2')."_".$request->input('i_i_3')."_".$request->input('i_i_4')."_".$request->input('i_i_5')."_".$request->input('i_i_6')."_".$request->input('i_i_7')."_".$request->input('i_i_8')."_".$request->input('i_i_9')."_".$request->input('i_i_10')."_".$request->input('i_i_11')."_".$request->input('i_i_12')."_".$request->input('i_i_13')."_".$request->input('i_i_14')."_".$request->input('i_i_15')."_".$request->input('i_i_16')."_".$request->input('i_i_17')."_".$request->input('i_i_18')."_".$request->input('i_i_19')."_".$request->input('i_i_20')."_".$request->input('i_i_21')."_".$request->input('i_i_22')."_".$request->input('i_i_23')."_".$request->input('i_i_24')."_".$request->input('i_i_25')."_".$request->input('i_i_26')."_".$request->input('i_i_27')."_".$request->input('i_i_28')."_".$request->input('i_i_29')."_".$request->input('i_i_30')."_".$request->input('i_i_31')."_".$request->input('i_i_32')."_".$request->input('i_i_33')."_".$request->input('i_i_34')."_".$request->input('i_i_35'),
+                    'electrical_inspection' => $request->input('el_i_1')."_".$request->input('el_i_2')."_".$request->input('el_i_3')."_".$request->input('el_i_4')."_".$request->input('el_i_5')."_".$request->input('el_i_6')."_".$request->input('el_i_7')."_".$request->input('el_i_8')."_".$request->input('el_i_9')."_".$request->input('el_i_10')."_".$request->input('el_i_11'),
+                    'accessibility_inspection' => $request->input('a_i_1')."_".$request->input('a_i_2')."_".$request->input('a_i_3')."_".$request->input('a_i_4')."_".$request->input('a_i_5')."_".$request->input('a_i_6'),
+                    'additional_information_1' => $request->input('additional_information_1'),
+                    'additional_information_2' => $request->input('additional_information_2'),
+                    'additional_information_3' => $request->input('additional_information_3'),
+                    'additional_information_4' => $request->input('additional_information_4'),
+                    'additional_notes' => $request->input('additional_notes'),
+                    'address_text' => $request->input('address_text'),
+                    'attachment_1' => $attachment_1,
+                    'ical_text' => $request->input('ical_text'),
+                    'contractor_builder_name' => $request->input('contractor_builder_name'),
+                    'thumb_1' => $thumb_1,
+                    'notify_glo' => $request->input('notify_glo'),
+                ]);
+
+                Photo::where([
+                    ['application_id', $id],
+                    ['type', '100%']
+                ])->update([
+                    'photo_1' => $photos[0],
+                    'photo_2' => $photos[1],
+                    'photo_3' => $photos[2],
+                    'photo_4' => $photos[3],
+                    'photo_5' => $photos[4],
+                    'photo_6' => $photos[5],
+                    'photo_7' => $photos[6],
+                    'photo_8' => $photos[7],
+                    'photo_9' => $photos[8],
+                    'photo_10' => $photos[9],
+                    'photo_11' => $photos[10],
+                    'photo_12' => $photos[11],
+                    'photo_13' => $photos[12],
+                    'photo_14' => $photos[13],
+                    'photo_15' => $photos[14],
+                    'photo_16' => $photos[15],
+                    'photo_17' => $photos[16],
+                    'photo_18' => $photos[17],
+                    'photo_19' => $photos[18],
+                    'photo_20' => $photos[19],
+                    'photo_21' => $photos[20],
+                    'photo_22' => $photos[21],
+                    'photo_23' => $photos[22],
+                    'photo_24' => $photos[23],
+                    'photo_25' => $photos[24],
+                    'photo_26' => $photos[25],
+                    'photo_27' => $photos[26],
+                    'photo_28' => $photos[27],
+                    'photo_29' => $photos[28],
+                    'photo_30' => $photos[29]
+                ]);
+
+                Deficiency::where([
+                    ['application_id', $id],
+                    ['type', '100%']
+                ])->update([
+                    'deficiency_1' => $deficiencies[0],
+                    'deficiency_photo_1' => $deficiency_photos[0],
+                    'deficiency_2' => $deficiencies[1],
+                    'deficiency_photo_2' => $deficiency_photos[1],
+                    'deficiency_3' => $deficiencies[2],
+                    'deficiency_photo_3' => $deficiency_photos[2],
+                    'deficiency_4' => $deficiencies[3],
+                    'deficiency_photo_4' => $deficiency_photos[3],
+                    'deficiency_5' => $deficiencies[4],
+                    'deficiency_photo_5' => $deficiency_photos[4],
+                    'deficiency_6' => $deficiencies[5],
+                    'deficiency_photo_6' => $deficiency_photos[5],
+                    'deficiency_7' => $deficiencies[6],
+                    'deficiency_photo_7' => $deficiency_photos[6],
+                    'deficiency_8' => $deficiencies[7],
+                    'deficiency_photo_8' => $deficiency_photos[7],
+                    'deficiency_9' => $deficiencies[8],
+                    'deficiency_photo_9' => $deficiency_photos[8],
+                    'deficiency_10' => $deficiencies[9],
+                    'deficiency_photo_10' => $deficiency_photos[9],
+                    'deficiency_11' => $deficiencies[10],
+                    'deficiency_photo_11' => $deficiency_photos[10],
+                    'deficiency_12' => $deficiencies[11],
+                    'deficiency_photo_12' => $deficiency_photos[11],
+                    'deficiency_13' => $deficiencies[12],
+                    'deficiency_photo_13' => $deficiency_photos[12],
+                ]);
+            }
+        }
+
+        Auditor::create([
+            'user_id' => Auth::user()->id,
+            'notification' => '<a href="'.url('admin/view-application/'.$id).'">HRIQ ID '.$request->input('hriq_id').'</a>  Application Updated',
+            'date' => strtotime(date('Y-m-d H:i:s')),
+            'status' => 'unseen'
+        ]);
+
+        $inspectorChangeEmail = 1;
+        $statusChangeEmail = 1;
+        if($inspectorChangeEmail != 1 && $statusChangeEmail != 1) {
+            $admins = User::where('role_id', 2)->get();
+            foreach ($admins as $admin) {
+                dispatch(new UpdateApplicationJob(Auth::user()->id, $admin->email, $id));
+            }
+        }
+
+        session()->flash('message', 'application_updated');
+        if(Auth::user()->role_id == 1) {
+            return Redirect::to('contractor/edit-application/'.$id);
+        } else if(Auth::user()->role_id == 2) {
+            return Redirect::to('admin/edit-application/'.$id);
+        } else {
+            return Redirect::to('inspector/edit-application/'.$id);
+        }
+    }
+
+    function uploadSign(Request $request) {
+        $folderPath = public_path('storage/uploads/');
+
+        $image_parts = explode(";base64,", $request->signed);
+
+        $image_type_aux = explode("image/", $image_parts[0]);
+
+        $image_type = $image_type_aux[1];
+
+        $image_base64 = base64_decode($image_parts[1]);
+
+        $file = $folderPath . uniqid() . '.'.$image_type;
+
+        $fileName = explode('storage/uploads/', $file);
+        $fileName = $fileName[1];
+
+        file_put_contents($file, $image_base64);
+
+        $id = $request->input('id');
+        $type = $request->input('type');
+
+        if ($type == 'inspector') {
+            Status50::where('application_id', $id)->update([
+                'inspection_sign' => $fileName,
+                'inspection_sign_off_date' => date('m/d/Y')
+            ]);
+
+            Status100::where('application_id', $id)->update([
+                'inspection_sign' => $fileName,
+                'inspection_sign_off_date' => date('m/d/Y')
+            ]);
+        } else if($type == 'homeowner') {
+            Status50::where('application_id', $id)->update([
+                'homeowner_sign' => $fileName,
+                'homeowner_sign_off_date' => date('m/d/Y')
+            ]);
+
+            Status100::where('application_id', $id)->update([
+                'homeowner_sign' => $fileName,
+                'homeowner_sign_off_date' => date('m/d/Y')
+            ]);
+        } else if($type == 'superintendent') {
+            Status50::where('application_id', $id)->update([
+                'superintendent_sign' => $fileName,
+                'superintendent_sign_off_date' => date('m/d/Y')
+            ]);
+
+            Status100::where('application_id', $id)->update([
+                'superintendent_sign' => $fileName,
+                'superintendent_sign_off_date' => date('m/d/Y')
+            ]);
+        }
+
+        echo json_encode('success');
+    }
+
+    function removeSign(Request $request) {
+        $id = $request->input('id');
+        $type = $request->input('type');
+
+        if ($type == 'inspector') {
+            Status50::where('application_id', $id)->update([
+                'inspection_sign' => null,
+                'inspection_sign_off_date' => null
+            ]);
+
+            Status100::where('application_id', $id)->update([
+                'inspection_sign' => null,
+                'inspection_sign_off_date' => null
+            ]);
+        } else if($type == 'homeowner') {
+            Status50::where('application_id', $id)->update([
+                'homeowner_sign' => null,
+                'homeowner_sign_off_date' => null
+            ]);
+
+            Status100::where('application_id', $id)->update([
+                'homeowner_sign' => null,
+                'homeowner_sign_off_date' => null
+            ]);
+        } else if($type == 'superintendent') {
+            Status50::where('application_id', $id)->update([
+                'superintendent_sign' => null,
+                'superintendent_sign_off_date' => null
+            ]);
+
+            Status100::where('application_id', $id)->update([
+                'superintendent_sign' => null,
+                'superintendent_sign_off_date' => null
+            ]);
+        }
+
+        echo json_encode('success');
+    }
+}
+
+
+
+

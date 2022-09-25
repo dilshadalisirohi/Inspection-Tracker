@@ -1,0 +1,8 @@
+[01-Feb-2022 01:05:41 America/Chicago] PHP Fatal error:  Allowed memory size of 1073741824 bytes exhausted (tried to allocate 551694336 bytes) in /home/heydev/public_html/dev/app/app/Http/Controllers/ApplicationController.php on line 43
+[01-Feb-2022 01:05:56 America/Chicago] PHP Fatal error:  Allowed memory size of 1073741824 bytes exhausted (tried to allocate 547094528 bytes) in /home/heydev/public_html/dev/app/app/Http/Controllers/ApplicationController.php on line 43
+[15-Feb-2022 08:53:04 America/New_York] PHP Warning:  require(/home/heydev/public_html/dev/inspection/public/../vendor/autoload.php): Failed to open stream: No such file or directory in /home/heydev/public_html/dev/inspection/public/index.php on line 34
+[15-Feb-2022 08:53:04 America/New_York] PHP Fatal error:  Uncaught Error: Failed opening required '/home/heydev/public_html/dev/inspection/public/../vendor/autoload.php' (include_path='.:/opt/alt/php80/usr/share/pear:/opt/alt/php80/usr/share/php:/usr/share/pear:/usr/share/php') in /home/heydev/public_html/dev/inspection/public/index.php:34
+Stack trace:
+#0 /home/heydev/public_html/dev/inspection/index.php(22): require_once()
+#1 {main}
+  thrown in /home/heydev/public_html/dev/inspection/public/index.php on line 34
